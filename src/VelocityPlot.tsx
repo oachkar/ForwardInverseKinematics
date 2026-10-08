@@ -1,52 +1,51 @@
+import { type PointerEvent as ReactPointerEvent } from "react";
 import type { Point } from "./kinematics";
 
 type Props = {
-  qdot: Point;
-  onChange?: (v: Point) => void;
-  readOnly?: boolean;
+  value: Point;
+  onChange: (v: Point) => void;
+  title: string;
+  symbol: string;
+  maxMagnitude: number;
 };
 
 const SIZE = 260;
 const CENTER = SIZE / 2;
 const R = 91;
 
-function toSvg(v: Point) {
+function toSvg(v: Point, maxMagnitude: number) {
   return {
-    x: CENTER + v.x * R,
-    y: CENTER - v.y * R,
+    x: CENTER + (v.x / maxMagnitude) * R,
+    y: CENTER - (v.y / maxMagnitude) * R,
   };
 }
 
-function toWorld(x: number, y: number): Point {
+function toWorld(x: number, y: number, maxMagnitude: number): Point {
   return {
-    x: (x - CENTER) / R,
-    y: -(y - CENTER) / R,
+    x: ((x - CENTER) / R) * maxMagnitude,
+    y: -((y - CENTER) / R) * maxMagnitude,
   };
 }
 
 export default function VelocityPlot({
-  qdot,
-  onChange = () => {},
-  readOnly = false,
+  value,
+  onChange,
+  title,
+  symbol,
+  maxMagnitude,
 }: Props) {
-  const p = toSvg({
-    x: Math.max(-1, Math.min(1, qdot.x)),
-    y: Math.max(-1, Math.min(1, qdot.y)),
-  });
+  const p = toSvg(value, maxMagnitude);
 
-  function handlePointerMove(e: React.PointerEvent<SVGSVGElement>) {
-    if (readOnly || e.buttons !== 1) return;
-
+  function setFromPointer(e: ReactPointerEvent<SVGSVGElement>) {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * SIZE;
     const y = ((e.clientY - rect.top) / rect.height) * SIZE;
-    const next = toWorld(x, y);
+    const next = toWorld(x, y, maxMagnitude);
 
-    // Constrain qdot to the unit disc, matching the original demo.
     const mag = Math.hypot(next.x, next.y);
-    if (mag > 1) {
-      next.x /= mag;
-      next.y /= mag;
+    if (mag > maxMagnitude) {
+      next.x *= maxMagnitude / mag;
+      next.y *= maxMagnitude / mag;
     }
 
     onChange(next);
@@ -55,16 +54,22 @@ export default function VelocityPlot({
   return (
     <div className="velocity-panel">
       <div className="panel-title-row">
-        <span>Joint velocity</span>
+        <span>{title}</span>
         <span className="mono">
-          q̇ = [{qdot.x.toFixed(3)}, {qdot.y.toFixed(3)}]
+          {symbol} = [{value.x.toFixed(3)}, {value.y.toFixed(3)}]
         </span>
       </div>
 
       <svg
-        className={`velocity-svg ${readOnly ? "read-only" : ""}`}
+        className="velocity-svg"
         viewBox={`0 0 ${SIZE} ${SIZE}`}
-        onPointerMove={handlePointerMove}
+        onPointerDown={(e: ReactPointerEvent<SVGSVGElement>) => {
+          e.currentTarget.setPointerCapture(e.pointerId);
+          setFromPointer(e);
+        }}
+        onPointerMove={(e: ReactPointerEvent<SVGSVGElement>) => {
+          if (e.buttons === 1) setFromPointer(e);
+        }}
       >
         <circle cx={CENTER} cy={CENTER} r={R} className="unit-disc" />
         <line x1="14" x2={SIZE - 14} y1={CENTER} y2={CENTER} className="axis" />
@@ -82,36 +87,33 @@ export default function VelocityPlot({
           cy={p.y}
           r="7"
           className="qdot-point"
-          style={{ cursor: readOnly ? "default" : "grab" }}
         />
 
-        <text x={SIZE - 18} y={CENTER - 7} className="axis-label">
-          q̇₁
+        <text x={SIZE - 22} y={CENTER - 7} className="axis-label">
+          {symbol}₁
         </text>
         <text x={CENTER + 8} y={20} className="axis-label">
-          q̇₂
+          {symbol}₂
         </text>
         <text x={CENTER + 8} y={CENTER - 9} className="small-label">
           0
         </text>
         <text x={CENTER + R - 7} y={CENTER + 18} className="small-label">
-          1
+          +{maxMagnitude === 1 ? "1" : maxMagnitude.toFixed(1)}
         </text>
-        <text x={CENTER - R - 13} y={CENTER + 18} className="small-label">
-          −1
+        <text x={CENTER - R - 16} y={CENTER + 18} className="small-label">
+          −{maxMagnitude === 1 ? "1" : maxMagnitude.toFixed(1)}
         </text>
         <text x={CENTER + 7} y={CENTER - R + 7} className="small-label">
-          1
+          +{maxMagnitude === 1 ? "1" : maxMagnitude.toFixed(1)}
         </text>
         <text x={CENTER + 7} y={CENTER + R} className="small-label">
-          −1
+          −{maxMagnitude === 1 ? "1" : maxMagnitude.toFixed(1)}
         </text>
       </svg>
 
       <div className="velocity-help">
-        {readOnly
-          ? "Inverse velocity mode: the joint velocity shown here is computed from the desired end-effector velocity."
-          : "Drag the point inside the unit disc. The demo limits joint-velocity magnitude to ≤ 1."}
+        Drag the vector. Maximum magnitude: {maxMagnitude.toFixed(1)}.
       </div>
     </div>
   );

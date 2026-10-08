@@ -295,7 +295,7 @@ input[type="range"] {
 }
 
 .target-hit {
-  cursor: grab;
+  cursor: default;
   stroke: white;
   stroke-width: 3;
 }
@@ -579,5 +579,122 @@ input[type="range"] {
 
   .header {
     flex-direction: column;
+  }
+}
+.control.disabled {
+  opacity: 0.68;
+}
+
+.control.disabled input[type="range"] {
+  cursor: not-allowed;
+}
+
+.target-hit-area,
+.end-effector-hit {
+  fill: transparent;
+  stroke: transparent;
+  cursor: grab;
+  pointer-events: all;
+}
+
+.target-hit-area:active,
+.end-effector-hit:active {
+  cursor: grabbing;
+}
+
+.end-effector-hit {
+  r: 17px;
+}
+
+.link-outline {
+  stroke: #1a2229;
+  stroke-width: 33;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.link-1,
+.link-2 {
+  vector-effect: non-scaling-stroke;
+}
+
+.link-1 {
+  stroke: #59626c;
+}
+
+.link-2 {
+  stroke: #6e7781;
+}
+
+.velocity-input-arrow {
+  stroke: #405fdb;
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+
+.velocity-arrow {
+  stroke: #d34f8a;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-dasharray: 7 6;
+}
+
+.residual-row {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e0e5ea;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #74818d;
+  font-size: 11px;
+}
+
+.residual-row strong {
+  color: #21733d;
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+
+.no-solution {
+  margin-top: 11px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  color: #9e3030;
+  background: #fff2f2;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.velocity-summary {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.velocity-summary div {
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid #e0e6eb;
+  background: #fff;
+}
+
+.velocity-summary span {
+  display: block;
+  color: #74818d;
+  font-size: 10px;
+  margin-bottom: 4px;
+}
+
+.velocity-summary strong {
+  display: block;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .velocity-summary {
+    grid-template-columns: 1fr;
   }
 }

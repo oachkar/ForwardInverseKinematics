@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import ArmPlot from "./ArmPlot";
 import VelocityPlot from "./VelocityPlot";
 import {
@@ -19,27 +19,30 @@ function format(n: number, digits = 3) {
 function Slider({
   label,
   value,
+  displayValue,
   min,
   max,
   step,
   onChange,
   suffix = "",
+  disabled = false,
 }: {
   label: string;
   value: number;
+  displayValue?: string;
   min: number;
   max: number;
   step: number;
   onChange: (value: number) => void;
   suffix?: string;
+  disabled?: boolean;
 }) {
   return (
-    <label className="control">
+    <label className={`control ${disabled ? "disabled" : ""}`}>
       <div className="control-row">
         <span>{label}</span>
         <span className="control-value">
-          {value.toFixed(step < 0.1 ? 2 : 1)}
-          {suffix}
+          {displayValue ?? `${value.toFixed(step < 0.1 ? 2 : 1)}${suffix}`}
         </span>
       </div>
       <input
@@ -48,7 +51,8 @@ function Slider({
         max={max}
         step={step}
         value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
+        disabled={disabled}
+        onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(Number(e.target.value))}
       />
     </label>
   );
@@ -59,6 +63,8 @@ export default function App() {
   const [l1, setL1] = useState(1.59);
   const l2 = 2 - l1;
 
+  // These are the stored forward-kinematics angles. In inverse mode the
+  // displayed values are instead taken directly from the current IK solution.
   const [theta1Deg, setTheta1Deg] = useState(-58);
   const [theta2Deg, setTheta2Deg] = useState(-38);
   const theta1 = degToRad(theta1Deg);
@@ -72,7 +78,14 @@ export default function App() {
 
   const initialPose = fk(theta1, theta2, l1, l2);
   const [target, setTarget] = useState<Point>(initialPose.end);
-  const [velocity, setVelocity] = useState<Point>({ x: 0.6, y: 0.2 });
+
+  // Forward velocity input: joint velocity qdot.
+  const [jointVelocity, setJointVelocity] = useState<Point>({ x: 0.6, y: 0.2 });
+  // Inverse velocity input: desired end-effector velocity v_d.
+  const [desiredEndVelocity, setDesiredEndVelocity] = useState<Point>({
+    x: 0.6,
+    y: 0.2,
+  });
 
   const ikSolution = useMemo(
     () => ik(target, l1, l2, elbowUp),
@@ -84,14 +97,45 @@ export default function App() {
   const activeTheta2 =
     inverseMode && ikSolution.reachable ? ikSolution.theta2 : theta2;
 
+  // Keep the angle controls synchronized with whatever the robot is actually
+  // showing in inverse mode. If the target is unreachable, leave the stored
+  // forward angles alone but show "No solution" rather than fake 0° values.
+  useEffect(() => {
+    if (!inverseMode || !ikSolution.reachable) return;
+
+    const nextTheta1 = radToDeg(ikSolution.theta1);
+    const nextTheta2 = radToDeg(ikSolution.theta2);
+
+    setTheta1Deg((current) =>
+      Math.abs(current - nextTheta1) > 1e-9 ? nextTheta1 : current
+    );
+    setTheta2Deg((current) =>
+      Math.abs(current - nextTheta2) > 1e-9 ? nextTheta2 : current
+    );
+  }, [inverseMode, ikSolution]);
+
   const pose = fk(activeTheta1, activeTheta2, l1, l2);
   const J = jacobian(activeTheta1, activeTheta2, l1, l2);
-  const inverseVelocity = pseudoinverseVelocity(J, velocity).qdot;
 
-  // In forward velocity mode, the editable unit-disc locator is qdot.
-  // In inverse velocity mode, velocity is the editable end-effector vector
-  // and the app computes qdot through the pseudoinverse.
-  const qdot = velocityMode === "forward" ? velocity : inverseVelocity;
+  const inverseVelocity = useMemo(
+    () => pseudoinverseVelocity(J, desiredEndVelocity),
+    [J, desiredEndVelocity]
+  );
+
+  const qdot = velocityMode === "forward" ? jointVelocity : inverseVelocity.qdot;
+  const actualEndVelocity = {
+    x: J[0][0] * qdot.x + J[0][1] * qdot.y,
+    y: J[1][0] * qdot.x + J[1][1] * qdot.y,
+  };
+
+  const desiredVelocity =
+    velocityMode === "forward" ? null : desiredEndVelocity;
+  const velocityResidual = velocityMode === "inverse" && ikSolution.reachable
+    ? Math.hypot(
+        actualEndVelocity.x - desiredEndVelocity.x,
+        actualEndVelocity.y - desiredEndVelocity.y
+      )
+    : null;
 
   function setForwardTheta1(v: number) {
     setInverseMode(false);
@@ -121,9 +165,22 @@ export default function App() {
     setElbowUp(false);
     setInverseMode(false);
     setVelocityMode("forward");
-    setVelocity({ x: 0.6, y: 0.2 });
+    setJointVelocity({ x: 0.6, y: 0.2 });
+    setDesiredEndVelocity({ x: 0.6, y: 0.2 });
     setTarget(p.end);
   }
+
+  const angle1Display = inverseMode
+    ? ikSolution.reachable
+      ? `${radToDeg(ikSolution.theta1).toFixed(2)}°`
+      : "No solution"
+    : `${theta1Deg.toFixed(1)}°`;
+
+  const angle2Display = inverseMode
+    ? ikSolution.reachable
+      ? `${radToDeg(ikSolution.theta2).toFixed(2)}°`
+      : "No solution"
+    : `${theta2Deg.toFixed(1)}°`;
 
   return (
     <div className="app">
@@ -165,20 +222,24 @@ export default function App() {
             <Slider
               label="θ₁"
               value={theta1Deg}
+              displayValue={angle1Display}
               min={-180}
               max={180}
               step={1}
               suffix="°"
+              disabled={inverseMode}
               onChange={setForwardTheta1}
             />
 
             <Slider
               label="θ₂"
               value={theta2Deg}
+              displayValue={angle2Display}
               min={-180}
               max={180}
               step={1}
               suffix="°"
+              disabled={inverseMode}
               onChange={setForwardTheta2}
             />
 
@@ -186,7 +247,7 @@ export default function App() {
               <input
                 type="checkbox"
                 checked={elbowUp}
-                onChange={(e) => setElbowUp(e.target.checked)}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => setElbowUp(e.target.checked)}
               />
               <span>elbow up?</span>
             </label>
@@ -207,15 +268,26 @@ export default function App() {
             </div>
 
             <div className="subtle">
-              Forward mode uses θ₁/θ₂ as inputs. Inverse mode uses the draggable
-              green target.
+              {inverseMode
+                ? "The target determines θ₁/θ₂. Angle sliders are locked to the displayed IK solution."
+                : "Forward mode uses θ₁/θ₂ as inputs. Drag the end effector or green target to switch to inverse mode."}
             </div>
           </section>
 
           <VelocityPlot
-            qdot={qdot}
-            onChange={setVelocity}
-            readOnly={velocityMode === "inverse"}
+            value={velocityMode === "forward" ? jointVelocity : desiredEndVelocity}
+            onChange={
+              velocityMode === "forward"
+                ? setJointVelocity
+                : setDesiredEndVelocity
+            }
+            title={
+              velocityMode === "forward"
+                ? "Joint velocity"
+                : "Desired end-effector velocity"
+            }
+            symbol={velocityMode === "forward" ? "q̇" : "v"}
+            maxMagnitude={velocityMode === "forward" ? 1 : 1.5}
           />
 
           <section className="card velocity-card">
@@ -248,6 +320,12 @@ export default function App() {
                 <strong>{format(jointSpeed(qdot))}</strong>
               </div>
             </div>
+            {velocityResidual !== null && (
+              <div className="residual-row">
+                <span>‖v − vᵈ‖</span>
+                <strong>{velocityResidual.toExponential(2)}</strong>
+              </div>
+            )}
           </section>
         </aside>
 
@@ -260,14 +338,10 @@ export default function App() {
             elbowUp={elbowUp}
             target={target}
             velocityMode={velocityMode}
-            requestedVelocity={velocity}
+            qdot={qdot}
+            desiredEndVelocity={desiredVelocity}
+            actualEndVelocity={actualEndVelocity}
             onTargetChange={handleTargetChange}
-            onVelocityChange={setVelocity}
-            onAnglesChange={(a, b) => {
-              setTheta1Deg(radToDeg(a));
-              setTheta2Deg(radToDeg(b));
-              setInverseMode(false);
-            }}
           />
 
           <section className="math-card">
@@ -275,24 +349,26 @@ export default function App() {
               <div>
                 <div className="section-title">Current kinematic state</div>
                 <div className="subtle">
-                  Useful for demonstrating that the web app is computing the
-                  same mathematics rather than only animating an image.
+                  These values are calculated directly from the current robot
+                  configuration rather than being hard-coded display values.
                 </div>
               </div>
-              <span className="status-pill neutral">
-                {inverseMode ? "IK active" : "FK active"}
+              <span
+                className={`status-pill ${inverseMode && !ikSolution.reachable ? "bad" : "neutral"}`}
+              >
+                {inverseMode
+                  ? ikSolution.reachable
+                    ? "IK active"
+                    : "IK: no solution"
+                  : "FK active"}
               </span>
             </div>
 
             <div className="math-grid">
               <div className="formula">
                 <div className="formula-title">Forward position</div>
-                <code>
-                  x = r₁ cos θ₁ + r₂ cos(θ₁ + θ₂)
-                </code>
-                <code>
-                  y = r₁ sin θ₁ + r₂ sin(θ₁ + θ₂)
-                </code>
+                <code>x = r₁ cos θ₁ + r₂ cos(θ₁ + θ₂)</code>
+                <code>y = r₁ sin θ₁ + r₂ sin(θ₁ + θ₂)</code>
                 <div className="result">
                   <span>x</span>
                   <strong>{format(pose.end.x)}</strong>
@@ -303,26 +379,27 @@ export default function App() {
 
               <div className="formula">
                 <div className="formula-title">Inverse position</div>
-                <code>
-                  D = (x² + y² − r₁² − r₂²) / (2 r₁ r₂)
-                </code>
+                <code>D = (x² + y² − r₁² − r₂²) / (2 r₁ r₂)</code>
                 <code>θ₂ = atan2(±√(1 − D²), D)</code>
                 <code>
                   θ₁ = atan2(y,x) − atan2(r₂ sin θ₂, r₁+r₂ cos θ₂)
                 </code>
-                <div className="result">
-                  <span>θ₁</span>
-                  <strong>{format(radToDeg(ikSolution.theta1), 2)}°</strong>
-                  <span>θ₂</span>
-                  <strong>{format(radToDeg(ikSolution.theta2), 2)}°</strong>
-                </div>
+                {ikSolution.reachable ? (
+                  <div className="result">
+                    <span>θ₁</span>
+                    <strong>{format(radToDeg(ikSolution.theta1), 2)}°</strong>
+                    <span>θ₂</span>
+                    <strong>{format(radToDeg(ikSolution.theta2), 2)}°</strong>
+                  </div>
+                ) : (
+                  <div className="no-solution">No valid IK solution for the current target.</div>
+                )}
               </div>
 
               <div className="formula wide">
                 <div className="formula-title">Jacobian</div>
                 <code>
-                  J = ∂(x,y)/∂(θ₁,θ₂) = [ −r₁sinθ₁−r₂sin(θ₁+θ₂), −r₂sin(θ₁+θ₂);
-                  r₁cosθ₁+r₂cos(θ₁+θ₂), r₂cos(θ₁+θ₂) ]
+                  J = ∂(x,y)/∂(θ₁,θ₂) = [ −r₁sinθ₁−r₂sin(θ₁+θ₂), −r₂sin(θ₁+θ₂); r₁cosθ₁+r₂cos(θ₁+θ₂), r₂cos(θ₁+θ₂) ]
                 </code>
                 <div className="matrix-result">
                   <span>[</span>
@@ -333,6 +410,27 @@ export default function App() {
                     <span>{format(J[1][1])}</span>
                   </div>
                   <span>]</span>
+                </div>
+              </div>
+
+              <div className="formula wide velocity-mapping">
+                <div className="formula-title">Velocity mapping</div>
+                <code>v = J q̇</code>
+                <div className="velocity-summary">
+                  <div>
+                    <span>q̇</span>
+                    <strong>[{format(qdot.x)}, {format(qdot.y)}]</strong>
+                  </div>
+                  <div>
+                    <span>actual v</span>
+                    <strong>[{format(actualEndVelocity.x)}, {format(actualEndVelocity.y)}]</strong>
+                  </div>
+                  {velocityMode === "inverse" && desiredEndVelocity && (
+                    <div>
+                      <span>desired v</span>
+                      <strong>[{format(desiredEndVelocity.x)}, {format(desiredEndVelocity.y)}]</strong>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
